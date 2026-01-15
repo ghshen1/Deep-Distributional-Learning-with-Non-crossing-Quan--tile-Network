@@ -1,4 +1,4 @@
-# Deep Distributional Learning with Non-crossing Quantile Network (NQ-Net)
+<img width="706" height="268" alt="image" src="https://github.com/user-attachments/assets/1fa6df33-5f3e-459b-9c11-1b984dd44df6" /># Deep Distributional Learning with Non-crossing Quantile Network (NQ-Net)
 
 This repository contains the full implementation and experimental code for the paper:
 
@@ -83,6 +83,14 @@ python simulation_multivariate.py
 The results will be saved in the corresponding simulation_univariate/ and simulation_multivariate/ folders.
 
 ### Reproducing Real-Data Analyses
+
+## Download Datasets
+Please down the datasets of IDHP and ACIC via:
+
+https://www.dropbox.com/scl/fo/a8hgr5d3yjyoigf7p68y7/AE5Xw3eDZNw0MCIYyWFkw4g?rlkey=jmbfvlyu1qmk95yzdu19s3kde&e=1&st=1n8a6c1o&dl=0
+
+Then put them into a folder named  `datasets` under the working directory.
+
 ## IHDP Dataset
 To reproduce the IHDP distributional treatment effect analysis:
 ```bash

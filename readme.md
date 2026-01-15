@@ -1,9 +1,8 @@
-<img width="706" height="268" alt="image" src="https://github.com/user-attachments/assets/1fa6df33-5f3e-459b-9c11-1b984dd44df6" /># Deep Distributional Learning with Non-crossing Quantile Network (NQ-Net)
+# Deep Distributional Learning with Non-crossing Quantile Network (NQ-Net)
 
 This repository contains the full implementation and experimental code for the paper:
 
-**Deep Distributional Learning with Non-crossing Quantile Network**  
-(G. Shen et al.)
+**Deep Distributional Learning with Non-crossing Quantile Network.** Shen, G., Dai, R., Wu, G., Luo, S., Shi, C., & Zhu, H. `arXiv preprint 	arXiv:2504.08215`
 
 The code reproduces all simulation studies, real-data analyses, and figures reported in the paper, including applications to causal inference using the IHDP and ACIC datasets.
 

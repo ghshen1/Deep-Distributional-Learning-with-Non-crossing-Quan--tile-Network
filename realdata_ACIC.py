@@ -847,7 +847,7 @@ if __name__ == "__main__":
     class Config:
         def __init__(self):
             # --- Main Settings ---
-            self.data_path = 'dataset/ACIC2019.csv'
+            self.data_path = 'data/ACIC2019.csv'
             self.output_dir = './ACIC_results'
             self.seed = 42
             self.num_replications = 20

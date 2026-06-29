@@ -77,9 +77,9 @@ def gen_multi(A=None,B=None,size=2**10,d=8,model='sim',error='t',df=3,sigma=1):
     elif model == 'linear':
         y = 2 * torch.from_numpy(np.dot(x.data.numpy(), A.data.numpy())) + sigma * eps
     elif model == 'scenario1':
-        y = g2(g1(x))
+        y = g2(g1(x)) + sigma * eps
     elif model == 'scenario2':
-        y = h3(h2(h1(x)))
+        y = h3(h2(h1(x))) + sigma * eps
     else:
         raise ValueError(f"Unknown model type: {model}")
     y = y.float()

@@ -29,7 +29,7 @@ class NQNet_arch(nn.Module):
             #layers.append(nn.BatchNorm1d(self.width_vec[i+1]))
 
         delta_layers = layers.copy()
-        delta_layers.append(nn.Linear(self.width_vec[-2], self.n_out))
+        delta_layers.append(nn.Linear(self.width_vec[-2], self.n_out - 1))
         self.delta = nn.Sequential(*delta_layers)
         if self.ind:
             value_layers = []
@@ -54,7 +54,8 @@ class NQNet_arch(nn.Module):
         value = self.value(x)
         gaps = self.gap_activation(self.delta(x))
 
-        cumsum_gaps = torch.cumsum(gaps, dim=1)
+        zero = torch.zeros(x.shape[0], 1, dtype=gaps.dtype, device=gaps.device)
+        cumsum_gaps = torch.cumsum(torch.cat([zero, gaps], dim=1), dim=1)
         cumsum_gaps0 = cumsum_gaps - cumsum_gaps.mean(dim=1, keepdim=True)
         out = value + cumsum_gaps0
         return out

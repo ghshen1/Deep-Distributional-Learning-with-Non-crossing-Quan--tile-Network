@@ -19,7 +19,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import QuantileRegressor
 from sklearn.ensemble import RandomForestRegressor
 from numba import jit, prange, set_num_threads
-from scipy.stats import norm
+from scipy.stats import norm, t as student_t
+import argparse
+from multiprocessing import Pool
 
 # Imports for KernelQR
 from cvxopt import solvers, matrix
@@ -41,7 +43,7 @@ def set_seed(s=42):
         torch.cuda.manual_seed_all(s)
 
 # =============================================================================
-# 1. Model Implementations (Including the new DQRP)
+# 1. Model Implementations
 # =============================================================================
 
 # --- Original Torch Models ---
@@ -185,7 +187,7 @@ def _fit_torch_model(model_class, X, y, quantiles,
             if verbose: print("Learning rate is too low. Stopping training."); break
     model_arch.load_state_dict(best_model_state); return model_arch
 
-# --- NEW: DQRP Implementation from user ---
+# --- DQRP Implementation ---
 
 class ReLU2(nn.Module):
     def __init__(self):
@@ -442,10 +444,10 @@ def main(cfg):
     mu1s = np.concatenate([train_raw['mu1'], test_raw['mu1']], axis=0)
     ALL_QUANTILES = np.round(np.arange(0.05, 1.0, 0.05), 2)
     
-    # MODIFICATION 1: Changed 'QuantileNet' to 'DQR*'
-    model_factory = {'DQR*': QuantileNet, 'NQNet': NQNet, 'DQR': DQR, 'DQRP': DQRP_Adapter, 
+    # 'DQR*' is the internal label for VDQR, the unconstrained deep quantile network.
+    model_factory = {'DQR*': QuantileNet, 'NQNet': NQNet, 'DQR': DQR, 'DQRP': DQRP_Adapter,
                      'Linear': LinearQR, 'Forest': QuantileForest, 'Kernel': Kernel}
-    results = {name: [] for name in model_factory.keys()}
+    results = {name: [] for name in list(model_factory.keys()) + ['VDQR+R']}
 
     for i in tqdm(range(cfg.replications), desc="Replications"):
         X, y, t, mu0, mu1 = xs[:, :, i], ys[:, i], ts[:, i], mu0s[:, i], mu1s[:, i]
@@ -475,7 +477,7 @@ def main(cfg):
             model1 = ModelClass(quantiles=ALL_QUANTILES)
             
             fit_params = {}
-            if name in ['NQNet', 'DQR*', 'DQR']: # Changed 'QuantileNet' to 'DQR*'
+            if name in ['NQNet', 'DQR*', 'DQR']:
                 fit_params = {'nepochs': cfg.nn_epochs, 'lr': cfg.nn_lr, 'patience': cfg.nn_patience,
                               'batch_size': cfg.nn_batch_size, 'val_pct': cfg.nn_val_pct}
             elif name == 'DQRP':
@@ -492,6 +494,15 @@ def main(cfg):
             metrics['Coverage'] = calculate_coverage(pred_q0, pred_q1, ALL_QUANTILES, y_test, t_test)
             current_replication_results[name] = metrics
 
+            # VDQR + rearrangement (Chernozhukov et al., 2010): sort each predicted
+            # quantile vector ascending, restoring monotonicity from the same VDQR fit.
+            if name == 'DQR*':
+                p0r, p1r = np.sort(pred_q0, axis=1), np.sort(pred_q1, axis=1)
+                metrics_r = calculate_metrics(p0r, p1r, true_q0[test_indices], true_q1[test_indices],
+                                              true_cate[test_indices], true_qte[test_indices], ALL_QUANTILES)
+                metrics_r['Coverage'] = calculate_coverage(p0r, p1r, ALL_QUANTILES, y_test, t_test)
+                current_replication_results['VDQR+R'] = metrics_r
+
         for name, metrics in current_replication_results.items(): results[name].append(metrics)
 
     print("\n" + "="*80 + f"\nFinal Results (mean (std) over {cfg.replications} replications)\n" + "="*80)
@@ -500,7 +511,7 @@ def main(cfg):
     for name, res_list in results.items():
         df = pd.DataFrame(res_list); mean_vals, std_vals = df.mean(), df.std()
         
-        # MODIFICATION 2 & 3: Changed table format to 'mean (std)' and NCR to percentage
+        # format each cell as 'mean (std)'; NCR as a percentage
         summary_df.loc[name] = [
             f"{mean_vals['PEHE']:.3f} ({std_vals['PEHE']:.3f})",
             f"{mean_vals['IMSE-QTE']:.3f} ({std_vals['IMSE-QTE']:.3f})",
@@ -510,8 +521,9 @@ def main(cfg):
             f"{mean_vals['NCR']*100:.2f}% ({std_vals['NCR']*100:.2f}%)"
         ]
     
-    paper_order = ['DQR*', 'DQR', 'NQNet', 'DQRP', 'Linear', 'Forest', 'Kernel'] # Changed 'NaiveQuantileNet' to 'DQR*'
-    summary_df = summary_df.reindex(paper_order).dropna()
+    paper_order = ['NQNet', 'DQR', 'DQR*', 'VDQR+R', 'DQRP', 'Linear', 'Forest', 'Kernel']
+    summary_df = summary_df.reindex([o for o in paper_order if o in summary_df.index])
+    summary_df = summary_df.rename(index={'DQR*': 'VDQR'})
     print(summary_df.to_string())
     
     if not os.path.exists(cfg.output_dir): os.makedirs(cfg.output_dir)
@@ -522,20 +534,197 @@ def main(cfg):
 # =============================================================================
 # 4. Script Execution
 # =============================================================================
-if __name__ == "__main__":
-    class Config:
-        data_dir = 'dataset'
-        train_data_file = 'ihdp_npci_1-1000.train.npz'
-        test_data_file = 'ihdp_npci_1-1000.test.npz'
-        replications = 100
-        output_dir = 'IHDP_results'
-        seed = 42
-        test_size = 0.20
-        nn_epochs = 200
-        nn_patience = 20
-        nn_batch_size = 64
-        nn_val_pct = 0.20
-        nn_lr = 5e-4
-        dqr_p_lr = 0.01
 
-    main(Config())
+
+# =============================================================================
+# 5. Non-Gaussian distributional descriptors (Table S10)
+# =============================================================================
+
+ALL_Q = np.round(np.arange(0.05, 1.0, 0.05), 2)         # 19 quantile levels
+TAUS_NP = ALL_Q
+FP = dict(nepochs=200, lr=5e-4, patience=20, batch_size=64, val_pct=0.20)
+S_LN = 0.5                                              # log-normal log-sd
+NOISES = ['normal', 't3', 'lognorm']
+METHODS_NG = ['NQ-Net', 'VDQR', 'VDQR+R', 'DQR', 'DQRP']
+
+
+def descriptors(q):
+    """mean, sd, skewness, excess kurtosis read off the K quantile values."""
+    m = q.mean(1); c = q - m[:, None]
+    var = np.maximum((c ** 2).mean(1), 1e-12); sd = np.sqrt(var)
+    skew = (c ** 3).mean(1) / sd ** 3
+    kurt = (c ** 4).mean(1) / var ** 2 - 3.0
+    return m, sd, skew, kurt
+
+
+def rmse(a, b):
+    return float(np.sqrt(np.mean((a - b) ** 2)))
+
+
+def to_np(p):
+    return p.detach().numpy() if hasattr(p, 'detach') else np.asarray(p)
+
+
+def es_lower(Q, beta=0.10):
+    """(1/beta) int_0^beta Q(u) du; Q piecewise-linear on the tau grid, flat below tau_0."""
+    g = TAUS_NP
+    integral = Q[:, 0] * g[0]
+    for k in range(len(g) - 1):
+        a, b = g[k], g[k + 1]
+        if b <= beta:
+            integral += 0.5 * (Q[:, k] + Q[:, k + 1]) * (b - a)
+        elif a < beta < b:
+            w = (beta - a) / (b - a); Qb = Q[:, k] * (1 - w) + Q[:, k + 1] * w
+            integral += 0.5 * (Q[:, k] + Qb) * (beta - a); break
+        else:
+            break
+    return integral / beta
+
+
+def es_upper(Q, beta=0.10):
+    """(1/beta) int_{1-beta}^1 Q(u) du; flat above tau_{K-1}."""
+    g = TAUS_NP; start = 1 - beta
+    integral = Q[:, -1] * (1 - g[-1])
+    for k in range(len(g) - 1, 0, -1):
+        a, b = g[k - 1], g[k]
+        if a >= start:
+            integral += 0.5 * (Q[:, k - 1] + Q[:, k]) * (b - a)
+        elif a < start < b:
+            w = (start - a) / (b - a); Qs = Q[:, k - 1] * (1 - w) + Q[:, k] * w
+            integral += 0.5 * (Qs + Q[:, k]) * (b - start); break
+        else:
+            break
+    return integral / beta
+
+
+def _ln_const(s):
+    m = np.exp(s * s / 2.0); sd = np.sqrt((np.exp(s * s) - 1.0) * np.exp(s * s))
+    return m, sd
+
+
+def noise_sample(kind, n, rng):
+    if kind == 'normal':
+        return rng.standard_normal(n)
+    if kind == 't3':
+        return rng.standard_t(3, n) / np.sqrt(3.0)
+    if kind == 'lognorm':
+        m, sd = _ln_const(S_LN); return (np.exp(S_LN * rng.standard_normal(n)) - m) / sd
+    raise ValueError(kind)
+
+
+def noise_quantile(kind, taus):
+    if kind == 'normal':
+        return norm.ppf(taus)
+    if kind == 't3':
+        return student_t.ppf(taus, 3) / np.sqrt(3.0)
+    if kind == 'lognorm':
+        m, sd = _ln_const(S_LN); return (np.exp(S_LN * norm.ppf(taus)) - m) / sd
+    raise ValueError(kind)
+
+
+def panel_te(p0, p1, tq0, tq1, true_cate, true_qte, y_test, t_test):
+    d = {}
+    est_cate = (p1 - p0).mean(1)
+    d['PEHE'] = float(np.sqrt(np.mean((est_cate - true_cate) ** 2)))
+    d['IMSE-QTE'] = float(np.mean(((p1 - p0) - true_qte) ** 2))
+    d['W1'] = float(0.5 * (np.mean(np.abs(p0 - tq0)) + np.mean(np.abs(p1 - tq1))))
+
+    def ncr(p): return float(np.mean(np.all(np.diff(p, 1) >= -1e-6, 1)))
+    def sev(p): return float(np.mean(np.sum(np.maximum(0.0, -np.diff(p, 1)), 1)))
+    d['NCR'] = 0.5 * (ncr(p0) + ncr(p1)); d['CrossSev'] = 0.5 * (sev(p0) + sev(p1))
+
+    m0, s0, k0, u0 = descriptors(p0); m1, s1, k1, u1 = descriptors(p1)
+    tm0, ts0, tk0, tu0 = descriptors(tq0); tm1, ts1, tk1, tu1 = descriptors(tq1)
+    d['mean'] = 0.5 * (rmse(m0, tm0) + rmse(m1, tm1)); d['sd'] = 0.5 * (rmse(s0, ts0) + rmse(s1, ts1))
+    d['skew'] = 0.5 * (rmse(k0, tk0) + rmse(k1, tk1)); d['kurt'] = 0.5 * (rmse(u0, tu0) + rmse(u1, tu1))
+    d['CVaR_low'] = 0.5 * (rmse(es_lower(p0), es_lower(tq0)) + rmse(es_lower(p1), es_lower(tq1)))
+    d['CVaR_high'] = 0.5 * (rmse(es_upper(p0), es_upper(tq0)) + rmse(es_upper(p1), es_upper(tq1)))
+    lo = np.where(t_test == 0, p0[:, 0], p1[:, 0]); hi = np.where(t_test == 0, p0[:, 18], p1[:, 18])
+    sw = lo > hi; lo2 = np.where(sw, hi, lo); hi2 = np.where(sw, lo, hi)
+    d['Coverage'] = float(np.mean((y_test >= lo2) & (y_test <= hi2)))
+    return d
+
+
+def run_nongauss_cell(task):
+    """Full panel on IHDP surfaces with a standardized non-Gaussian outcome. One (noise, rep)."""
+    kind, rep, xs, mu0s, mu1s, ts = task
+    import torch
+    torch.set_num_threads(1)
+    rng = np.random.RandomState(1000 + rep)
+    rows = []
+    try:
+        X = xs[:, :, rep]; mu0 = mu0s[:, rep]; mu1 = mu1s[:, rep]; t = ts[:, rep]
+        eps = noise_sample(kind, X.shape[0], rng)
+        y = np.where(t == 0, mu0, mu1) + eps
+        idx = np.arange(X.shape[0]); tri, tei = train_test_split(idx, test_size=0.20, random_state=42 + rep)
+        X0, y0 = X[tri][t[tri] == 0], y[tri][t[tri] == 0]
+        X1, y1 = X[tri][t[tri] == 1], y[tri][t[tri] == 1]
+        Xte = X[tei]; yte = y[tei]; tte = t[tei]
+        Z = noise_quantile(kind, ALL_Q)
+        tq0 = mu0[tei][:, None] + Z; tq1 = mu1[tei][:, None] + Z
+        true_cate = (mu1 - mu0)[tei]; true_qte = (mu1 - mu0)[tei][:, None] + np.zeros_like(Z)
+
+        def fit_pred(Cls, **kw):
+            m0, m1 = Cls(quantiles=ALL_Q), Cls(quantiles=ALL_Q)
+            m0.fit(X0, y0, **kw); m1.fit(X1, y1, **kw)
+            return to_np(m0.predict(Xte)), to_np(m1.predict(Xte))
+
+        nq0, nq1 = fit_pred(NQNet, **FP); v0, v1 = fit_pred(QuantileNet, **FP)
+        dq0, dq1 = fit_pred(DQR, **FP); dp0, dp1 = fit_pred(DQRP_Adapter, nepochs=100, dqr_p_lr=0.01)
+        preds = {'NQ-Net': (nq0, nq1), 'VDQR': (v0, v1), 'VDQR+R': (np.sort(v0, 1), np.sort(v1, 1)),
+                 'DQR': (dq0, dq1), 'DQRP': (dp0, dp1)}
+        for m, (p0, p1) in preds.items():
+            d = panel_te(p0, p1, tq0, tq1, true_cate, true_qte, yte, tte)
+            d.update(dict(model=kind, rep=rep, method=m)); rows.append(d)
+    except Exception as ex:
+        rows.append(dict(model=kind, rep=rep, method='ERROR', err=str(ex)))
+    print(f"  done {kind} rep {rep}", flush=True)
+    return rows
+
+
+def run_nongauss(reps=100, workers=10, out='results/ihdp_descriptors_nongauss.csv'):
+    """Table S10: RMSE against a non-Gaussian truth of the conditional mean, standard
+    deviation, skewness and kurtosis (plus a treatment-effect/validity panel), on the
+    IHDP response surfaces with standardized Student-t_3 / log-normal outcome noise."""
+    set_seed(42)
+    tr = np.load('data/ihdp_npci_1-1000.train.npz'); te = np.load('data/ihdp_npci_1-1000.test.npz')
+    xs = np.concatenate([tr['x'], te['x']], 0); ts = np.concatenate([tr['t'], te['t']], 0)
+    mu0s = np.concatenate([tr['mu0'], te['mu0']], 0); mu1s = np.concatenate([tr['mu1'], te['mu1']], 0)
+    tasks = [(kind, rep, xs, mu0s, mu1s, ts) for kind in NOISES for rep in range(reps)]
+    print(f"=== IHDP non-Gaussian descriptors (Table S10): {len(tasks)} cells, {workers} workers ===", flush=True)
+    with Pool(workers) as pool:
+        rows = [r for sub in pool.map(run_nongauss_cell, tasks) for r in sub]
+    df = pd.DataFrame(rows)
+    os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
+    df.to_csv(out, index=False)
+    nerr = int((df['method'] == 'ERROR').sum()) if 'method' in df else -1
+    print(f"\nwrote {out}  ({len(df)} rows, {nerr} errors)", flush=True)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--mode', choices=['table6', 'nongauss'], default='table6',
+                    help="table6: IHDP treatment-effect comparison (Table 6); "
+                         "nongauss: non-Gaussian distributional descriptors (Table S10)")
+    ap.add_argument('--reps', type=int, default=100)
+    ap.add_argument('--workers', type=int, default=10)
+    ap.add_argument('--out', default='results/ihdp_descriptors_nongauss.csv')
+    args = ap.parse_args()
+    if args.mode == 'table6':
+        class Config:
+            data_dir = 'data'
+            train_data_file = 'ihdp_npci_1-1000.train.npz'
+            test_data_file = 'ihdp_npci_1-1000.test.npz'
+            replications = 100
+            output_dir = 'IHDP_results'
+            seed = 42
+            test_size = 0.20
+            nn_epochs = 200
+            nn_patience = 20
+            nn_batch_size = 64
+            nn_val_pct = 0.20
+            nn_lr = 5e-4
+            dqr_p_lr = 0.01
+        main(Config())
+    else:
+        run_nongauss(args.reps, args.workers, args.out)

@@ -136,7 +136,7 @@ def plot_aqte_subplots_custom(aqte_df, paper_order, output_dir, sanitized_data_n
 
     # --- Add shared labels and legend ---
     fig.supxlabel(r'Quantile ($\tau$)', fontsize=font_sizes['axis_label'], y=0.02)
-    fig.supylabel('Average Treatment Effect', fontsize=font_sizes['axis_label'], x=0.04)
+    fig.supylabel('Average Quantile Treatment Effect', fontsize=font_sizes['axis_label'], x=0.04)
     # fig.suptitle('Average Quantile Treatment Effect (AQTE) Comparison',
     #              fontsize=font_sizes['suptitle'], y=1.0)
 
@@ -170,7 +170,7 @@ def plot_aqte_subplots_custom(aqte_df, paper_order, output_dir, sanitized_data_n
     # --- Save figure ---
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    plot_path = os.path.join(output_dir, "figure4.png")
+    plot_path = os.path.join(output_dir, "figureS5.png")
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     print(f"Customized AQTE subplot figure saved to: {plot_path}")
     plt.close()

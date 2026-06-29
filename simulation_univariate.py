@@ -242,7 +242,7 @@ merge_cells_by_size(output_excel_long, ['L1', 'L2'], block_size=len(taus_list))
 # 2. Save wide table (selected taus)
 l1_wide = make_wide_table(all_l1_mean, all_l1_std, sizes, save_taus, tau_labels)
 l2_wide = make_wide_table(all_l2_mean, all_l2_std, sizes, save_taus, tau_labels)
-output_excel_wide = os.path.join(summary_dir, f'{model}_{error}_summary_slected.xlsx')
+output_excel_wide = os.path.join(summary_dir, f'{model}_{error}_summary_selected.xlsx')
 with pd.ExcelWriter(output_excel_wide) as writer:
     l1_wide.to_excel(writer, sheet_name='L1', index=False)
     l2_wide.to_excel(writer, sheet_name='L2', index=False)
